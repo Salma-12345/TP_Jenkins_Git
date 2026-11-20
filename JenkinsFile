@@ -1,39 +1,54 @@
 pipeline {
   agent any
   options { timestamps() }
+
+  environment {
+    IMAGE = 'salma11122/monapp'
+    TAG   = "build-${env.BUILD_NUMBER}"
+  }
+
   stages {
-    stage('Cloner le depot') {
+    stage('Checkout') {
+      steps { checkout scm }
+    }
+
+    stage('Docker Build') {
       steps {
-        git url: 'https://github.com/Salma-12345/TP_Jenkins_Git.git', branch: 'main'
+        bat 'docker version'
+        bat "docker build -t %IMAGE%:%TAG% ."
       }
     }
-    stage('Etape 1 : Verification du depot') {
+
+    stage('Smoke Test') {
       steps {
-        bat 'echo === Etape 1 : Verification du depot ==='
-        bat 'git status'
+        bat """
+          docker rm -f monapp_test 2>nul || ver > nul
+          docker run -d --name monapp_test -p 8081:80 %IMAGE%:%TAG%
+          ping -n 3 127.0.0.1 > nul
+          curl -I http://localhost:8081 | find "200 OK"
+          docker rm -f monapp_test
+        """
       }
     }
-    stage('Etape 2 : Afficher le contenu du projet') {
+
+    stage('Push (Docker Hub)') {
       steps {
-        bat 'echo === Etape 2 : Afficher le contenu du projet ==='
-        bat 'dir'
-      }
-    }
-    stage('Etape 3 : Simuler un deploiement local') {
-      steps {
-        bat 'echo === Etape 3 : Simuler un deploiement local ==='
-        bat 'echo Le fichier index.html est pret a etre affiche'
-      }
-    }
-    stage('Etape 4 : Fin du build') {
-      steps {
-        bat 'echo === Etape 4 : Fin du build ==='
-        bat 'echo SUCCESS'
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds',
+                                          usernameVariable: 'USER',
+                                          passwordVariable: 'PASS')]) {
+          bat """
+            echo %PASS% | docker login -u %USER% --password-stdin
+            docker tag %IMAGE%:%TAG% %IMAGE%:latest
+            docker push %IMAGE%:%TAG%
+            docker push %IMAGE%:latest
+          """
+        }
       }
     }
   }
+
   post {
-    success { echo 'Build OK' }
-    failure { echo 'Build KO' }
+    success { echo 'Build+Test+Push OK' }
+    failure { echo 'Build/Tests/Push KO' }
   }
 }
